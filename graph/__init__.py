@@ -20,12 +20,20 @@ except Exception:  # pragma: no cover
     CpuModelRequest = None  # type: ignore[assignment]
     build_cpu_graph_scorer = None  # type: ignore[assignment]
 
+try:
+    from .semantic_master import SemanticMaster, DATA_PROCESSORS
+except Exception:  # pragma: no cover
+    SemanticMaster = None  # type: ignore[assignment]
+    DATA_PROCESSORS = []  # type: ignore[assignment]
+
 __all__ = [
     "GUtils",
     "CpuGraphScorer",
     "CpuModelConfig",
     "CpuModelRequest",
     "build_cpu_graph_scorer",
+    "SemanticMaster",
+    "DATA_PROCESSORS",
 ]
 
 if Brain is not None:

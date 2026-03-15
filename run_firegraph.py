@@ -33,7 +33,7 @@ class _MinimalGUtils:
     """Minimal GUtils for standalone use (no qbrain). Same add_node/add_edge interface."""
 
     def __init__(self, G=None, nx_only=True, **kwargs):
-        self.G = nx.Graph() if G is None else G
+        self.G = nx.MultiGraph() if G is None else G
         self.nx_only = nx_only
 
     def _clean(self, s):
@@ -47,16 +47,16 @@ class _MinimalGUtils:
         self.G.add_node(nid, **{k: v for k, v in attrs.items() if k != "id"})
         return True
 
-    def add_edge(self, src=None, trt=None, attrs: dict = None, **kwargs):
+    def add_edge(self, src=None, trgt=None, attrs: dict = None, **kwargs):
         attrs = attrs or {}
         src = src or attrs.get("src")
-        trt = trt or attrs.get("trt")
+        trgt = trgt or attrs.get("trgt")
         src_layer = (attrs.get("src_layer") or "NODE").upper().replace(" ", "_")
         trgt_layer = (attrs.get("trgt_layer") or "NODE").upper().replace(" ", "_")
         rel = (attrs.get("rel") or "link").lower().replace(" ", "_")
-        if src and trt:
-            edge_attrs = {k: v for k, v in attrs.items() if k not in ("src", "trt", "src_layer", "trgt_layer", "rel")}
-            self.G.add_edge(src, trt, rel=rel, src_layer=src_layer, trgt_layer=trgt_layer, **edge_attrs)
+        if src and trgt:
+            edge_attrs = {k: v for k, v in attrs.items() if k not in ("src", "trgt", "src_layer", "trgt_layer", "rel")}
+            self.G.add_edge(src, trgt, rel=rel, src_layer=src_layer, trgt_layer=trgt_layer, **edge_attrs)
 
     def save_graph(self, dest_file):
         _save_graph_fallback(self.G, dest_file)
@@ -77,15 +77,24 @@ def _create_g_visual_standalone(G: nx.Graph, dest_path: str):
         pass
     try:
         from pyvis.network import Network
-        new_G = nx.Graph()
+        _PALETTE = ["#ff6b6b", "#4ecdc4", "#45b7d1", "#96ceb4", "#ffeaa7", "#fd79a8",
+                    "#a29bfe", "#00b894", "#e17055", "#0984e3", "#6c5ce7", "#fdcb6e"]
+        _rel_color = lambda rel: _PALETTE[hash(rel) % len(_PALETTE)]
+        _ns = {"MODULE": ("#4a90d9", "box", 28), "CLASS": ("#7b68ee", "diamond", 24), "METHOD": ("#50c878", "dot", 18),
+               "PARAM": ("#f0e68c", "triangle", 14), "FOLDER": ("#20b2aa", "box", 22)}
+        new_G = nx.MultiGraph()
         for nid, attrs in G.nodes(data=True):
-            new_G.add_node(nid, type=attrs.get("type", "NODE"), label=str(nid))
+            ntype = attrs.get("type", "NODE")
+            c, sh, sz = _ns.get(ntype, ("#888", "dot", 16))
+            new_G.add_node(nid, label=str(nid), title=f"{ntype}: {nid}", color=c, shape=sh, size=sz)
         for src, trgt, attrs in G.edges(data=True):
             if new_G.has_node(src) and new_G.has_node(trgt):
-                new_G.add_edge(src, trgt, type=attrs.get("rel", "link"))
-        net = Network(notebook=False, cdn_resources="in_line", height="1000px", width="100%", bgcolor="#222222", font_color="white")
+                rel = attrs.get("rel", "link")
+                new_G.add_edge(src, trgt, color=_rel_color(rel), width=1.2, title=rel)
+        net = Network(notebook=False, cdn_resources="in_line", height="1000px", width="100%", bgcolor="#1a1a2e", font_color="white")
         net.barnes_hut()
         net.toggle_physics(True)
+        net.set_options('{"nodes":{"borderWidth":2,"font":{"size":14}},"edges":{"smooth":{"type":"continuous"}}}')
         net.from_nx(new_G)
         os.makedirs(os.path.dirname(dest_path) or ".", exist_ok=True)
         net.save_graph(dest_path)
@@ -96,14 +105,15 @@ def _create_g_visual_standalone(G: nx.Graph, dest_path: str):
         print(f"Err create_g_visual: {e}", file=sys.stderr)
 
 
-def _save_graph_fallback(G: nx.Graph, dest_path: str):
+def _save_graph_fallback(G, dest_path: str):
     """Save graph to JSON, stripping non-serializable node/edge attrs."""
-    G_copy = nx.Graph()
+    G_copy = nx.MultiGraph() if isinstance(G, nx.MultiGraph) else nx.Graph()
     for nid, attrs in G.nodes(data=True):
         clean = {k: v for k, v in attrs.items() if k not in _NON_SERIALIZABLE_KEYS}
         G_copy.add_node(nid, **clean)
-    for src, trgt, attrs in G.edges(data=True):
-        G_copy.add_edge(src, trgt, **attrs)
+    for src, trgt, *rest in G.edges(data=True):
+        attrs = rest[0] if rest else {}
+        G_copy.add_edge(src, trgt, **{k: v for k, v in attrs.items() if k not in _NON_SERIALIZABLE_KEYS})
     data = nx.node_link_data(G_copy, edges="edges")
     with open(dest_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, default=str)
@@ -153,7 +163,7 @@ def _add_folder_mapping(g_utils, root_path: str) -> set[str]:
             if par_dir:
                 par_id = _path_to_node_id(par_dir)
                 if not g_utils.G.has_edge(par_id, parent_id):
-                    g_utils.add_edge(src=par_id, trt=parent_id, attrs=dict(rel="contains", src_layer="FOLDER", trgt_layer="FOLDER"))
+                    g_utils.add_edge(src=par_id, trgt=parent_id, attrs=dict(rel="contains", src_layer="FOLDER", trgt_layer="FOLDER"))
 
         for d in dirnames:
             sub_path = os.path.join(dirpath, d)
@@ -161,7 +171,7 @@ def _add_folder_mapping(g_utils, root_path: str) -> set[str]:
             if not g_utils.G.has_node(sub_id):
                 g_utils.add_node(attrs=dict(id=sub_id, type="FOLDER", name=d, path=sub_path))
                 print(f"FOLDER node created: {sub_id}", file=sys.stderr)
-            g_utils.add_edge(src=parent_id, trt=sub_id, attrs=dict(rel="contains", src_layer="FOLDER", trgt_layer="FOLDER"))
+            g_utils.add_edge(src=parent_id, trgt=sub_id, attrs=dict(rel="contains", src_layer="FOLDER", trgt_layer="FOLDER"))
 
         for f in filenames:
             if f.endswith(".py"):
@@ -185,7 +195,7 @@ def run_workflow(source: str, is_path: bool = True, output_dir: str = "output"):
         output_dir = "output"
     output_dir = output_dir.strip() or "output"
 
-    G = nx.Graph()
+    G = nx.MultiGraph()
     GUtilsCls = _get_gutils()
     g_utils = GUtilsCls(G=G, nx_only=True)
 
@@ -215,7 +225,7 @@ def run_workflow(source: str, is_path: bool = True, output_dir: str = "output"):
                         continue
                     # FOLDER -> MODULE (dir contains module)
                     if g_utils.G.has_node(dir_id) and g_utils.G.has_node(module_name):
-                        g_utils.add_edge(src=dir_id, trt=module_name, attrs=dict(rel="contains", src_layer="FOLDER", trgt_layer="MODULE"))
+                        g_utils.add_edge(src=dir_id, trgt=module_name, attrs=dict(rel="contains", src_layer="FOLDER", trgt_layer="MODULE"))
                 except Exception as e:
                     print(f"Err analyzing {fp}: {e}", file=sys.stderr)
         else:
@@ -230,7 +240,7 @@ def run_workflow(source: str, is_path: bool = True, output_dir: str = "output"):
             dir_id = _path_to_node_id(os.path.dirname(path))
             if dir_id and g_utils.G.has_node(module_name):
                 g_utils.add_node(attrs=dict(id=dir_id, type="FOLDER", name=os.path.basename(os.path.dirname(path)), path=os.path.dirname(path)))
-                g_utils.add_edge(src=dir_id, trt=module_name, attrs=dict(rel="contains", src_layer="FOLDER", trgt_layer="MODULE"))
+                g_utils.add_edge(src=dir_id, trgt=module_name, attrs=dict(rel="contains", src_layer="FOLDER", trgt_layer="MODULE"))
     else:
         # Inline text
         content, module_name = _load_content(source, is_path)

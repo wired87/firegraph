@@ -174,13 +174,13 @@ class GUtils(Utils):
     def add_edge(
             self,
             src=None,
-            trt=None,
+            trgt=None,
             attrs: dict or None = None,
             flatten=False,
             timestep=None,
             index=None
     ):
-        #print(f"Add edge: {src} -> {trt}")
+        #print(f"Add edge: {src} -> {trgt}")
 
         # Color
         color = None
@@ -200,26 +200,26 @@ class GUtils(Utils):
             # #print("trgt_layer", trgt_layer)
             if src is None:
                 src = attrs.get("src")
-            if trt is None:
-                trt = attrs.get("trt")
+            if trgt is None:
+                trgt = attrs.get("trgt")
 
-            if src and trt and src_layer and trgt_layer:
+            if src and trgt and src_layer and trgt_layer:
                 if isinstance(src, int):
                     src = str(src)
-                if isinstance(trt, int):
-                    trt = str(trt)
+                if isinstance(trgt, int):
+                    trgt = str(trgt)
                 # #print("int conv...")
 
                 attrs = self.manipulator.clean_attr_keys(attrs, flatten)
                 # #print("attrs_new", attrs )
                 rel = attrs["rel"].lower().replace(" ", "_")
 
-                edge_id = f"{src}_{rel}_{trt}"
+                edge_id = f"{src}_{rel}_{trgt}"
 
                 attrs = {
                     **attrs,
                     "src": src,
-                    "trgt": trt,
+                    "trgt": trgt,
                     "eid": edge_id,
                     "tid": 0,
                     "color": color,
@@ -231,12 +231,12 @@ class GUtils(Utils):
                     attrs["eid"]
                 )
 
-                # #print(f"ids {src} -> {trt}; Layer {src_layer} -> {trgt_layer}")
+                # #print(f"ids {src} -> {trgt}; Layer {src_layer} -> {trgt_layer}")
                 edge_table_name = f"{src_layer}_{rel}_{trgt_layer}"
                 attrs["type"] = edge_table_name
 
                 src_node_attr = {"id": src, "type": src_layer}
-                trgt_node_attr = {"id": trt, "type": trgt_layer}
+                trgt_node_attr = {"id": trgt, "type": trgt_layer}
 
                 if self.nx_only is False:
                     # todo run in executor
@@ -246,12 +246,12 @@ class GUtils(Utils):
                     self.local_batch_loader(attrs)
 
                 # #print("Upsert to NX")
-                self.G.add_edge(src, trt, **{k: v for k, v in attrs.items()})
+                self.G.add_edge(src, trgt, **{k: v for k, v in attrs.items()})
 
                 if not self.G.has_node(src):
                     self.add_node(src_node_attr)
 
-                if not self.G.has_node(trt):
+                if not self.G.has_node(trgt):
                     self.add_node(trgt_node_attr)
 
                 # Add history entry only when datastore/history is enabled.
@@ -266,7 +266,7 @@ class GUtils(Utils):
                 raise ValueError(f"Wrong edge fromat")
 
         except Exception as e:
-            raise ValueError(f"Skipping link src: {src} -> trgt: {trt} cause:", e, attrs)
+            raise ValueError(f"Skipping link src: {src} -> trgt: {trgt} cause:", e, attrs)
 
 
     def _extend_key_map(self, attrs):
@@ -356,10 +356,10 @@ class GUtils(Utils):
         self._extend_key_map(attrs)
 
         # Update nx
-        if "Graph" in str(type(self.G)):
+        if isinstance(self.G, (nx.MultiGraph, nx.MultiDiGraph)):
             for key, edge in self.G.get_edge_data(src, trgt).items():
                 erel = edge.get("rel")
-                if erel in rels:
+                if rels is None or erel in rels:
                     if self.enable_data_store is True:
                         edge_id = f"{src}_{erel}_{trgt}"
                         self.h_entry(
@@ -391,7 +391,7 @@ class GUtils(Utils):
         if G is not None:
             self.G = G
         elif self.G is None:
-            self.G = nx.Graph()  # normaler G da gluon -> gluon sonst explodieren würde
+            self.G = nx.MultiGraph()
         #print("Local Graph loaded")
 
     def save_graph(self, dest_file, ds=False):
@@ -422,13 +422,12 @@ class GUtils(Utils):
                     [k for k in attrs.keys()],
                 )
             )
-        for src, trgt, attrs in G.edges(data=True):
-            G.edges[src, trgt].update(
-                check_serialize_dict(
-                    attrs,
-                    [k for k in attrs.keys()],
-                )
-            )
+        if isinstance(G, (nx.MultiGraph, nx.MultiDiGraph)):
+            for u, v, k, d in G.edges(keys=True, data=True):
+                G.edges[u, v, k].update(check_serialize_dict(d, list(d.keys())))
+        else:
+            for src, trgt, attrs in G.edges(data=True):
+                G.edges[src, trgt].update(check_serialize_dict(attrs, list(attrs.keys())))
         return G
 
 
@@ -440,7 +439,7 @@ class GUtils(Utils):
         with open(local_g_path, "r", encoding="utf-8") as f:
             graph_data = json.load(f)  # Use json.load() for files, not json.loads()
 
-        self.G = nx.node_link_graph(graph_data)
+        self.G = nx.node_link_graph(graph_data, multigraph=graph_data.get("multigraph", True))
 
         # return env
         for k, v in self.G.nodes(data=True):

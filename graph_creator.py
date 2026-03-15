@@ -92,7 +92,7 @@ class StructInspector(ast.NodeVisitor):
             self.g.add_node(attrs=dict(id=class_id, type="CLASS", name=class_id))
             self.g.add_edge(
                 src=self.module_name,
-                trt=class_id,
+                trgt=class_id,
                 attrs=dict(rel="has_class", trgt_layer="CLASS", src_layer="MODULE"),
             )
             print(f"CLASS node created: {class_id}", file=sys.stderr)
@@ -169,7 +169,7 @@ class StructInspector(ast.NodeVisitor):
                 # MODULE -> METHOD
                 self.g.add_edge(
                     src=self.module_name,
-                    trt=method_id,
+                    trgt=method_id,
                     attrs=dict(
                         rel='has_method',
                         trgt_layer='METHOD',
@@ -180,7 +180,7 @@ class StructInspector(ast.NodeVisitor):
                 if self.current_class:
                     self.g.add_edge(
                         src=self.current_class,
-                        trt=method_id,
+                        trgt=method_id,
                         attrs=dict(
                             rel='has_method',
                             trgt_layer='METHOD',
@@ -218,7 +218,7 @@ class StructInspector(ast.NodeVisitor):
                 # METHOD -> PARAM
                 self.g.add_edge(
                     src=method_id,
-                    trt=param_name,
+                    trgt=param_name,
                     attrs=dict(
                         rel='requires_param',
                         type=param_type,
@@ -230,7 +230,7 @@ class StructInspector(ast.NodeVisitor):
                 if not self.g.G.has_edge(self.module_name, param_name):
                     self.g.add_edge(
                         src=self.module_name,
-                        trt=param_name,
+                        trgt=param_name,
                         attrs=dict(
                             rel='requires_param',
                             trgt_layer='PARAM',
@@ -246,13 +246,13 @@ class StructInspector(ast.NodeVisitor):
             self.g.add_node(attrs=dict(id=return_key, type='PARAM'))
             self.g.add_edge(
                 src=method_id,
-                trt=return_key,
+                trgt=return_key,
                 attrs=dict(rel='returns_param', trgt_layer='PARAM', src_layer='METHOD'),
             )
             if not self.g.G.has_edge(self.module_name, return_key):
                 self.g.add_edge(
                     src=self.module_name,
-                    trt=return_key.strip(),
+                    trgt=return_key.strip(),
                     attrs=dict(rel='returns_param', trgt_layer='PARAM', src_layer='MODULE'),
                 )
         print("process_method_params... done -> filtered_args", filtered_args, file=sys.stderr)
@@ -303,7 +303,7 @@ class StructInspector(ast.NodeVisitor):
                     # CLASS -> CLASS_VAR
                     self.g.add_edge(
                         src=self.current_class,
-                        trt=var_id,
+                        trgt=var_id,
                         attrs=dict(rel='has_var', trgt_layer='CLASS_VAR', src_layer='CLASS'),
                     )
             except Exception as e:
@@ -371,19 +371,19 @@ class _UsageLinker(ast.NodeVisitor):
             return cand if cand in self._method_ids else None
         return None
 
-    def _add_link(self, src: str, trt: str, rel: str, src_layer: str, trgt_layer: str):
+    def _add_link(self, src: str, trgt: str, rel: str, src_layer: str, trgt_layer: str):
         """Add usage edge; skip if target node missing."""
-        if not self.g.G.has_node(trt):
+        if not self.g.G.has_node(trgt):
             return
         try:
             self.g.add_edge(
                 src=src,
-                trt=trt,
+                trgt=trgt,
                 attrs=dict(rel=rel, src_layer=src_layer, trgt_layer=trgt_layer),
             )
-            print(f"LINK {rel}: {src} -> {trt}", file=sys.stderr)
+            print(f"LINK {rel}: {src} -> {trgt}", file=sys.stderr)
         except Exception as e:
-            print(f"Err add edge {src}->{trt}: {e}", file=sys.stderr)
+            print(f"Err add edge {src}->{trgt}: {e}", file=sys.stderr)
 
     def visit_ClassDef(self, node: ast.ClassDef):
         prev = self.current_class
