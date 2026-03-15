@@ -256,8 +256,7 @@ class StructInspector(ast.NodeVisitor):
                     attrs=dict(rel='returns_param', trgt_layer='PARAM', src_layer='MODULE'),
                 )
         print("process_method_params... done -> filtered_args", filtered_args, file=sys.stderr)
-
-
+        return filtered_args
 
     def extract_return_statement_expression(self, method_node: ast.FunctionDef) -> Optional[str]:
         """

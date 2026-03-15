@@ -180,10 +180,11 @@ def _add_folder_mapping(g_utils, root_path: str) -> set[str]:
     return py_files
 
 
-def run_workflow(source: str, is_path: bool = True, output_dir: str = "output"):
+def run_workflow(source: str, is_path: bool = True, output_dir: str = "firegraph-output"):
     """
     Analyze source (file path, folder path, or code string), build graph, visualize, save.
     If path is folder: os.walk adds FOLDER nodes + contains edges, then analyzes each .py file.
+    output_dir: relative paths resolved from cwd (works when installed via pip).
     """
     # Validate input
     if not source or not isinstance(source, str):
@@ -192,8 +193,10 @@ def run_workflow(source: str, is_path: bool = True, output_dir: str = "output"):
     if not source:
         raise ValueError("source must be a non-empty string")
     if not output_dir or not isinstance(output_dir, str):
-        output_dir = "output"
-    output_dir = output_dir.strip() or "output"
+        output_dir = "firegraph-output"
+    output_dir = output_dir.strip() or "firegraph-output"
+    # Resolve relative to cwd so output lands in user's project when run via pip
+    output_dir = os.path.abspath(output_dir) if not os.path.isabs(output_dir) else output_dir
 
     G = nx.MultiGraph()
     GUtilsCls = _get_gutils()
@@ -249,6 +252,26 @@ def run_workflow(source: str, is_path: bool = True, output_dir: str = "output"):
         result = inspector.convert_module_to_graph(content, module_name)
         if isinstance(result, dict) and "Error" in result:
             raise ValueError(result["Error"])
+
+    # SemanticMaster: embed nodes, add technique nodes, similarity edges (when embedder available)
+    try:
+        from graph.semantic_master import SemanticMaster
+        if SemanticMaster:
+            sm = SemanticMaster(g_utils)
+            sm.run(threshold=0.5)
+    except ImportError:
+        # graph package may fail (qbrain deps); load semantic_master directly
+        try:
+            import importlib.util
+            _sm_path = os.path.join(os.path.dirname(__file__), "graph", "semantic_master.py")
+            if os.path.isfile(_sm_path):
+                spec = importlib.util.spec_from_file_location("semantic_master", _sm_path)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                if getattr(mod, "SemanticMaster", None):
+                    mod.SemanticMaster(g_utils).run(threshold=0.5)
+        except Exception:
+            pass
 
     # Save graph JSON
     os.makedirs(output_dir, exist_ok=True)

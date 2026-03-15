@@ -13,7 +13,7 @@ def _parse_input() -> tuple[str, bool, str]:
     args = sys.argv[1:]
     source = None
     is_path = True
-    output_dir = "output"
+    output_dir = "firegraph-output"
 
     i = 0
     while i < len(args):
@@ -30,15 +30,21 @@ def _parse_input() -> tuple[str, bool, str]:
         else:
             i += 1
 
+    # When installed via pip: default source = cwd (user's project), not package dir
     if source is None:
-        source = os.path.dirname(os.path.abspath(__file__))
+        source = os.getcwd()
     return source, is_path, output_dir
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """CLI entry point for firegraph."""
     source, is_path, output_dir = _parse_input()
     try:
         run_workflow(source, is_path=is_path, output_dir=output_dir)
     except (ValueError, FileNotFoundError) as e:
         print(str(e), file=sys.stderr)
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
