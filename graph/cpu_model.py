@@ -1,19 +1,22 @@
 from __future__ import annotations
 
-import dataclasses
+
 import hashlib
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
-import jax
-import jax.numpy as jnp
+
 
 try:
+    import jax
+    import jax.numpy as jnp
     from flax import linen as nn
 except Exception as _exc:  # pragma: no cover
     nn = None  # type: ignore[assignment]
+    jax=None
+    jnp=None
 
 
 @dataclass(frozen=True)

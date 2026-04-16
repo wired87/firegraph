@@ -7,10 +7,10 @@ from tempfile import TemporaryDirectory
 from typing import List, Dict
 import networkx as nx
 
-from qbrain.utils.serialize_complex import check_serialize_dict
-from qbrain.graph.visual import create_g_visual
-from qbrain.utils.manipulator import Manipulator
-from qbrain.graph.utils import Utils
+from firegraph.utils.serialize_complex import check_serialize_dict
+from firegraph.graph.visual import create_g_visual
+from firegraph.utils.manipulator import Manipulator
+from firegraph.graph.utils import Utils
 
 class GUtils(Utils):
     """
@@ -220,7 +220,7 @@ class GUtils(Utils):
                     **attrs,
                     "src": src,
                     "trgt": trgt,
-                    "eid": edge_id,
+                    "id": edge_id,
                     "tid": 0,
                     "color": color,
                 }
@@ -228,7 +228,7 @@ class GUtils(Utils):
                 # Add keys
                 self._extend_key_map(attrs)
                 self._extend_id_map(
-                    attrs["eid"]
+                    attrs["id"]
                 )
 
                 # #print(f"ids {src} -> {trgt}; Layer {src_layer} -> {trgt_layer}")
@@ -257,7 +257,7 @@ class GUtils(Utils):
                 # Add history entry only when datastore/history is enabled.
                 if self.enable_data_store is True:
                     self.h_entry(
-                        id=attrs["eid"],
+                        id=attrs["id"],
                         attrs={k: v for k, v in attrs.items() if k != "id"},
                         graph_item="edge"
                     )
@@ -310,7 +310,7 @@ class GUtils(Utils):
                 if edge["src"] == nid or edge["trgt"] == nid:
                     new_all_edges.append(edge)
         else:
-            return [{"attrs": attrs, "eid": eid} for eid, attrs in self.datastore.edges(data=True) if
+            return [{"attrs": attrs, "id": eid} for eid, attrs in self.datastore.edges(data=True) if
                     attrs.get("graph_item").lower() == "edge"]
 
         if len(new_all_edges):
@@ -364,16 +364,16 @@ class GUtils(Utils):
                         edge_id = f"{src}_{erel}_{trgt}"
                         self.h_entry(
                             edge_id,
-                            {k: v for k, v in attrs.items() if k != "eid"},
+                            {k: v for k, v in attrs.items() if k != "id"},
                             graph_item="edge"
                         )
                     self.G.edges[src, trgt, key].update(attrs)
         else:
             if self.enable_data_store is True:
-                edge_id = self.G.edges[src, trgt]["eid"]
+                edge_id = self.G.edges[src, trgt]["id"]
                 self.h_entry(
                     edge_id,
-                    {k: v for k, v in attrs.items() if k != "eid"},
+                    {k: v for k, v in attrs.items() if k != "id"},
                     graph_item="edge"
                 )
             self.G.edges[src, trgt].update(attrs)
@@ -456,14 +456,16 @@ class GUtils(Utils):
             if ntype not in everything:
                 everything[ntype] = []
             everything[ntype].append(k)
-
+        edges = []
+        for src, trgt, attrs in self.G.edges(data=True):
+            edges.append(attrs["id"])
         for k, v in everything.items():
             print(f"{k}: {len(v)} nodes:")#
             pprint.pp(v)
 
     def local_batch_loader(self, args):
         table_name = args.get("type")
-        row_id = args.get("id", args.get("eid"))
+        row_id = args.get("id", args.get("id"))
         if table_name:
             if table_name not in self.schemas:
                 self.schemas[table_name] = {
@@ -508,7 +510,7 @@ class GUtils(Utils):
         eids = []
         for nnid in neighbor_ids:
             eattrs = self.G.get_edge_data(src, nnid)
-            if "eid" in eattrs:
+            if "id" in eattrs:
                 eid = eattrs["id"]
             else:
                 rel = eattrs.get("rel")

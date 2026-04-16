@@ -1,7 +1,7 @@
 import json
 import re
 
-from qbrain.utils.file.flatten_dict import flatten_attributes
+from firegraph.utils.file.flatten_dict import flatten_attributes
 
 from functools import lru_cache
 

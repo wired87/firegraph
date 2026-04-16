@@ -11,7 +11,7 @@ from .image_processor import ImageProcessor
 from .graph_builder import build_graph
 
 if TYPE_CHECKING:
-    from qbrain.graph.local_graph_utils import GUtils
+    from firegraph.graph.local_graph_utils import GUtils
 
 
 class FileProcessorFacade:

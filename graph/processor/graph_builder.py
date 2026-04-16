@@ -5,7 +5,7 @@ from typing import List, Dict, Any, TYPE_CHECKING
 from collections import defaultdict
 
 if TYPE_CHECKING:
-    from qbrain.graph.local_graph_utils import GUtils
+    from firegraph.graph.local_graph_utils import GUtils
 
 
 def build_graph(

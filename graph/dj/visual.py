@@ -7,7 +7,7 @@ from rest_framework import serializers
 
 from rest_framework.views import APIView
 
-from qbrain.graph.visual import create_g_visual
+from firegraph.graph.visual import create_g_visual
 
 
 def event_stream(html):

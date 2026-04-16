@@ -3,15 +3,9 @@ SemanticMaster: embeds graph nodes, adds 24 data-science technique nodes,
 and creates semantic similarity edges with rel varying per technique.
 """
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-try:
-    from embedder import embed, similarity
-    _EMBEDDER_AVAILABLE = True
-except ImportError:
-    _EMBEDDER_AVAILABLE = False
 
-# 24 data-science technique definitions
 DATA_PROCESSORS: List[Dict[str, Any]] = [
     {"name": "GradientDescent", "equation": "theta_{j+1} = theta_j - alpha * gradient(J(theta_j))",
      "python_library": ["torch.optim.SGD", "jax.example_libraries.optimizers", "scipy.optimize.minimize"]},
@@ -72,8 +66,6 @@ class SemanticMaster:
 
     def __init__(self, g_utils: Any):
         self.g = g_utils
-        if not _EMBEDDER_AVAILABLE:
-            print("embedder not available (sentence_transformers); SemanticMaster disabled", file=sys.stderr)
 
     def _node_to_text(self, nid: str, attrs: Dict[str, Any]) -> str:
         """Build text for embedding from node id, type, docstring, etc."""
@@ -101,8 +93,8 @@ class SemanticMaster:
 
     def embed_all_nodes(self) -> Dict[str, Any]:
         """Embed all graph nodes; return dict nid -> vector (as tuple for similarity)."""
-        if not _EMBEDDER_AVAILABLE:
-            return {}
+        from embedder import embed, similarity
+
         embeddings = {}
         for nid, attrs in self.g.G.nodes(data=True):
             text = self._node_to_text(nid, attrs)
@@ -116,15 +108,14 @@ class SemanticMaster:
         Add semantic similarity edges. Node-to-node: rel=CosineSimilarity.
         Node-to-technique: rel=technique_name.
         """
-        if not _EMBEDDER_AVAILABLE:
-            return
+        from embedder import similarity
+
         embs = self.embed_all_nodes()
         if not embs:
             return
         nids = list(embs.keys())
         technique_ids = {p["name"] for p in DATA_PROCESSORS}
 
-        # Node-to-node: rel=CosineSimilarity
         for i, nid_a in enumerate(nids):
             for nid_b in nids[i + 1:]:
                 if nid_a == nid_b:

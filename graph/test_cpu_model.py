@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import networkx as nx
 
-from qbrain.graph.local_graph_utils import GUtils
-from qbrain.graph.cpu_model import CpuGraphScorer
+from firegraph.graph.local_graph_utils import GUtils
+from firegraph.graph.cpu_model import CpuGraphScorer
 
 
 def test_cpu_model_ctlr_returns_node_id_and_score():

@@ -22,8 +22,8 @@ _PROJECT_ROOT = _THIS_FILE.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from qbrain.graph.brn.brain import Brain
-from qbrain.graph.brn.brain_classifier import BrainClassifier
+from firegraph.graph.brn.brain import Brain
+from firegraph.graph.brn.brain_classifier import BrainClassifier
 
 
 console = Console()

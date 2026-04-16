@@ -8,8 +8,8 @@ import yaml
 from tqdm import tqdm
 import csv
 
-from qbrain.utils.serialize_complex import deserialize_complex
-from qbrain.utils.file.aread_json import aread_content
+from firegraph.utils.serialize_complex import deserialize_complex
+from firegraph.file.aread_json import aread_content
 
 
 class Utils:

@@ -3,7 +3,7 @@ from rich.console import Console
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 
-from qbrain.graph.models import KnowledgeNode
+from firegraph.graph.models import KnowledgeNode
 
 class BaseProcessor:
     def __init__(self):
