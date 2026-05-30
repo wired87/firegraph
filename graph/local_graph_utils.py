@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 
 from typing import List, Dict
 import networkx as nx
+import numpy as np
 
 from firegraph.utils.serialize_complex import check_serialize_dict
 from firegraph.graph.visual import create_g_visual
@@ -82,7 +83,7 @@ class GUtils(Utils):
         try:
             return self.G.nodes[nid]
         except Exception as e:
-            print("Err get_node:", e)
+            #print("Err get_node:", e)
             return None
 
     def print_edges(self, trgt_l, src_l):
@@ -115,9 +116,6 @@ class GUtils(Utils):
                 self.G.nodes[nid].update(attrs)
 
             self.G.add_node(nid, **{k: v for k, v in attrs.items() if k != "id"})
-
-            # Add history entry
-            #self.h_entry(nid, {k: v for k, v in attrs.items() if k != "id"})
 
             # Extedn keys
             self._extend_key_map(attrs)
@@ -396,6 +394,7 @@ class GUtils(Utils):
 
     def save_graph(self, dest_file, ds=False):
         print("Save Gs")
+
         if ds is True:
             G=self.datastore
         else:
@@ -408,7 +407,7 @@ class GUtils(Utils):
 
 
     def _link_safe(self, G, dest_name):
-        self.check_serilize(G)
+        G = self.check_serilize(G)
         data = nx.node_link_data(G)
 
         with open(f"{dest_name}", "w") as f:
@@ -422,6 +421,11 @@ class GUtils(Utils):
                     [k for k in attrs.keys()],
                 )
             )
+            if "embedding" in attrs:
+                attrs["embedding"] = np.array(attrs["embedding"]).tolist
+            if "embed" in attrs:
+                attrs["embed"] =  np.array(attrs["embedding"]).tolist
+
         if isinstance(G, (nx.MultiGraph, nx.MultiDiGraph)):
             for u, v, k, d in G.edges(keys=True, data=True):
                 G.edges[u, v, k].update(check_serialize_dict(d, list(d.keys())))
@@ -532,6 +536,13 @@ class GUtils(Utils):
         # Filter Input
         if isinstance(target_type, str):
             target_type = [target_type]
+
+        if target_type is None:
+            if self.G.has_node(node):
+                return {nnid: self.G.nodes[nnid] for nnid in self.G.neighbors(node)}
+            else:
+                print(f"node {node} not in G")
+
         upper_trgt_types = [t.upper() for t in target_type]
 
         if just_ids is True:
@@ -549,7 +560,7 @@ class GUtils(Utils):
                         neighbors[neighbor] = {}
                     neighbors[neighbor] = nattrs
 
-        #print(f"Neighbors extracted: {neighbors.keys()}")
+        print(f"Neighbors extracted: {neighbors.keys()}")
         return neighbors
 
 
@@ -681,7 +692,6 @@ class GUtils(Utils):
 
     def delete_node(self, delid):
         if delid and self.G.has_node(delid):
-            #print(f"Del node {delid}")
             self.G.remove_node(delid)
         else:
             print(f"Couldnt delete since {delid} doesnt exists")
