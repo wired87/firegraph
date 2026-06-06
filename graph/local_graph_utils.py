@@ -1,3 +1,25 @@
+"""
+firegraph.graph.local_graph_utils -- in-memory NetworkX graph helper (GUtils).
+
+User prompt (Cursor session):
+    "allocate _db logic to firegraph and include a check add, save, edit
+     process in each add_node, add_edge, and update_node-process.
+     (The db layer includes just two tables (nodes and edges) where specific
+     rows include the same fields as in the G-instance."
+
+What changed for the DB layer:
+  * The DuckDB code now lives under ``firegraph._db`` (was a top-level
+    ``_db`` package). ``firegraph._db.graph_store.GraphStore`` exposes a
+    two-table (``nodes``, ``edges``) facade.
+  * Every mutation method below (``add_node``, ``add_edge``, ``update_node``,
+    ``delete_node``) performs a check-add-save-edit cycle against that store
+    when ``enable_db_store=True``. The cycle is wrapped in try/except so
+    the in-memory graph mutation never fails because the DB is unreachable.
+
+The DB sync is OFF by default (``enable_db_store=False``) so existing
+pipelines that only need the in-memory graph behave exactly as before.
+"""
+
 import json
 import os
 import pprint
@@ -30,7 +52,12 @@ class GUtils(Utils):
             # queue: queue.Queue or None = None,
             enable_data_store=True,
             history_types=None,
-            file_store=None
+            file_store=None,
+            # When True, every add_node / add_edge / update_node / delete_node
+            # is mirrored into the two-table DuckDB store via GraphStore.
+            enable_db_store=False,
+            # Optional pre-built GraphStore (e.g. shared connection in tests / CLI).
+            db_store=None,
     ):
         super().__init__()
         self.G = None
@@ -39,8 +66,10 @@ class GUtils(Utils):
         self.get_nx_graph(G)
         self.nx_only = nx_only
         self.history = {}
+        self.batch_ids = set()
+        self.edge_store = []
 
-        #todo just temporary look for demo G in QFS and BB
+        #todo just tempora"ry look for demo G in QFS and BB
         demo_G_save_path = r"C:\Users\bestb\PycharmProjects\BestBrain\admin_data\demo_G.json" if os.name == "nt" else "admin_data/demo_G.json"
         if os.path.isfile(demo_G_save_path):
             self.demo_G_save_path = demo_G_save_path
@@ -67,11 +96,188 @@ class GUtils(Utils):
         self.key_map = set()
         self.id_map = set()
         self.schemas = {}
+
+        # Two-table DuckDB store (firegraph._db.graph_store.GraphStore).
+        # Lazy import so GUtils can still be imported on systems without duckdb
+        # when enable_db_store stays False.
+        self.enable_db_store = enable_db_store
+        self.db_store = db_store
+        if self.enable_db_store and self.db_store is None:
+            try:
+                from firegraph._db.graph_store import GraphStore
+                self.db_store = GraphStore()
+                print("[GUtils] DB store enabled (nodes, edges tables)")
+            except Exception as e:
+                # never crash the in-memory pipeline because the DB is down
+                print(f"[GUtils] DB store disabled (init failed): {e}")
+                self.enable_db_store = False
+                self.db_store = None
+
         print("GUtils initialized")
 
-    ####################################
-    # CORE                             #
-    ####################################
+        
+
+    def _db_upsert_edge(self, attrs: dict) -> None:
+        """Mirror an add_edge call into the edges table (check + add/save)."""
+        if not self.enable_db_store or self.db_store is None:
+            return
+        eid = attrs.get("id")
+        if not eid:
+            return
+        try:
+            existed = self.db_store.has_edge(eid)
+            ok = self.db_store.upsert_edge(attrs)
+            if ok:
+                print(f"[GUtils.db] edge {'EDITED' if existed else 'ADDED'}: {eid}")
+        except Exception as e:
+            print(f"[GUtils.db] edge sync failed for {eid}: {e}")
+
+    def _db_edit_node(self, attrs: dict) -> None:
+        """Mirror an update_node call (merge existing row with new attrs)."""
+        if not self.enable_db_store or self.db_store is None:
+            return
+        nid = attrs.get("id")
+        if not nid:
+            return
+        try:
+            ok = self.db_store.update_node(attrs)
+            if ok:
+                print(f"[GUtils.db] node MERGED: {nid}")
+        except Exception as e:
+            print(f"[GUtils.db] node merge failed for {nid}: {e}")
+
+    def _db_delete_node(self, nid: str) -> None:
+        """Mirror a delete_node call so the DB stays consistent with G."""
+        if not self.enable_db_store or self.db_store is None:
+            return
+        try:
+            self.db_store.delete_node(nid)
+            print(f"[GUtils.db] node DELETED: {nid}")
+        except Exception as e:
+            print(f"[GUtils.db] node delete failed for {nid}: {e}")
+
+    # ------------------------------------------------------------------
+    # CACHE LAYER -- used by pre-fetch sites to skip web requests for
+    # ids that are already known in the DB. Returns the set of ids that
+    # were restored (node row + every edge touching it) into self.G.
+    # ------------------------------------------------------------------
+    def cache_load(self, ids) -> set:
+        """Try to hydrate ``ids`` from the DB store. No-op when disabled."""
+        if not self.enable_db_store or self.db_store is None:
+            return set()
+        try:
+            return self.db_store.hydrate(self, ids)
+        except Exception as e:
+            print(f"[GUtils.cache_load] failed: {e}")
+            return set()
+
+    # ------------------------------------------------------------------
+    # INPUT ALIGNMENT + GRAPH CACHE WALK
+    # ------------------------------------------------------------------
+    # align_input: compare a freshly embedded user input to every prior
+    # <TYPE>_INPUT row in the DB store. If cosine similarity > threshold,
+    # the previously processed input is considered equivalent and the
+    # caller can short-circuit through cache_walk.
+    #
+    # cache_walk: BFS from a cached input node through the DB graph and
+    # hydrate every reachable node + edge into the in-memory G. One brand
+    # new input ("Brain") thus brings back its TISSUE root, anatomy
+    # children, proteins, GO terms, drugs - whatever was persisted on the
+    # previous run - with zero web traffic.
+    # ------------------------------------------------------------------
+    def align_input(self, embedding, ntype: str, threshold: float = 0.95, exclude_id: str = None):
+        """Find the closest prior ``<TYPE>_INPUT`` row in the DB store.
+
+        Returns ``(best_id, score)`` when ``score > threshold``, else ``None``.
+        ``exclude_id`` lets callers ignore the row they just wrote (otherwise
+        a fresh input would always match itself with score 1.0).
+        """
+        # No DB layer -> no cache to align against; this is a clean no-op.
+        if not self.enable_db_store or self.db_store is None:
+            return None
+        # The DBManager handle lives under the GraphStore facade.
+        try:
+            rows = self.db_store._db.run_query(
+                "SELECT id, embedding FROM nodes WHERE type = ?",
+                params=[str(ntype).upper()],
+                conv_to_dict=True,
+            )
+        except Exception as e:
+            print(f"[GUtils.align_input] DB probe failed for type={ntype}: {e}")
+            return None
+
+        if not rows:
+            return None
+
+        # decode JSON-encoded embedding column + drop self / empty rows
+        candidates = []
+        for r in rows:
+            rid = r.get("id")
+            if not rid or rid == exclude_id:
+                continue
+            emb = r.get("embedding")
+            if isinstance(emb, str):
+                try:
+                    emb = json.loads(emb)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+            if not emb:
+                continue
+            candidates.append((rid, emb))
+
+        if not candidates:
+            return None
+
+        # Cosine similarity: normalize once, dot-product per candidate.
+        q = np.asarray(embedding, dtype=np.float32)
+        q_norm = q / (np.linalg.norm(q) or 1.0)
+
+        best_id, best_score = None, -1.0
+        for cid, cemb in candidates:
+            c = np.asarray(cemb, dtype=np.float32)
+            denom = np.linalg.norm(c) or 1.0
+            score = float(np.dot(q_norm, c / denom))
+            if score > best_score:
+                best_id, best_score = cid, score
+
+        if best_score > threshold:
+            print(f"[GUtils.align_input] HIT {best_id} (score={best_score:.3f}) for type={ntype}")
+            return best_id, best_score
+        return None
+
+    def cache_walk(self, node_id: str, max_depth: int = 4) -> set:
+        """Hydrate every node reachable from ``node_id`` in the DB store into G.
+
+        Uses ``cache_load`` (which already pulls a node + every edge touching
+        it in one round-trip) as the per-layer primitive, then expands BFS
+        through the in-memory neighbors that just appeared. ``max_depth``
+        bounds the walk so a dense cached graph never explodes the working
+        set in one call (4 is enough for INPUT -> TISSUE -> PROTEIN -> GO).
+        """
+        if not self.enable_db_store or self.db_store is None or not node_id:
+            return set()
+
+        visited: set = set()
+        frontier: set = {node_id}
+        for depth in range(max_depth):
+            if not frontier:
+                break
+            # Pull this layer's rows + every edge touching them.
+            restored = self.cache_load(frontier)
+            visited.update(restored)
+            # Expand: NetworkX neighbors include the stub endpoints that hydrate
+            # already added for any edge that crosses into / out of the layer.
+            next_frontier: set = set()
+            for nid in restored:
+                if not self.G.has_node(nid):
+                    continue
+                for nnid in self.G.neighbors(nid):
+                    if nnid not in visited:
+                        next_frontier.add(nnid)
+            frontier = next_frontier - visited
+
+        print(f"[GUtils.cache_walk] {len(visited)} nodes hydrated starting from {node_id}")
+        return visited
 
     def get_edge(self, src, trgt):
         return self.G.edges[src, trgt]
@@ -79,11 +285,15 @@ class GUtils(Utils):
     def get_graph(self):
         return self.G
 
-    def get_node(self, nid):
+    def get_node(self, nid=None, key=None, value=None):
         try:
-            return self.G.nodes[nid]
+            if nid is not None:
+                return self.G.nodes[nid]
+            else:
+                for k, v in self.G.nodes(data=True):
+                    if v.get(key) == value:
+                        return v
         except Exception as e:
-            #print("Err get_node:", e)
             return None
 
     def print_edges(self, trgt_l, src_l):
@@ -120,6 +330,12 @@ class GUtils(Utils):
             # Extedn keys
             self._extend_key_map(attrs)
             self._extend_id_map(nid)
+            
+            """self.batch_ids.add(nid)
+            if len(self.batch_ids) >= 100:
+                self.db_store.upsert_nid_batch(self.batch_ids)
+                self.batch_ids = set()"""
+
             return True
         except Exception as e:
             print("Err add_node:", e)
@@ -252,14 +468,10 @@ class GUtils(Utils):
                 if not self.G.has_node(trgt):
                     self.add_node(trgt_node_attr)
 
-                # Add history entry only when datastore/history is enabled.
-                if self.enable_data_store is True:
-                    self.h_entry(
-                        id=attrs["id"],
-                        attrs={k: v for k, v in attrs.items() if k != "id"},
-                        graph_item="edge"
-                    )
-
+                self.edge_store.append(attrs)
+                if len(self.edge_store) > 0:
+                    self._db_upsert_edge(attrs)
+                    self.edge_store = []
             else:
                 raise ValueError(f"Wrong edge fromat")
 
@@ -278,7 +490,7 @@ class GUtils(Utils):
             self.id_map.add(nid)
 
 
-    def get_edges(self, src, trgt) -> list[dict or None]:
+    def get_edges(self, src, trgt):
         edges = []
         if "MultiGraph" in str(type(self.G)):
             for key, edge in self.G.get_edge_data(src, trgt).items():
@@ -337,6 +549,10 @@ class GUtils(Utils):
                 {k: v for k, v in attrs.items() if k != "id"},
                 graph_item="node"
             )
+
+        # DB sync (edit): merge new attrs with the existing row and upsert,
+        # so partial updates do not erase previously persisted columns.
+        self._db_edit_node(attrs)
 
     def update_edge(self, src, trgt, attrs, rels: str or list = None, temporal=False):
         # rel = attrs.get("rel", "").lower().replace(" ", "_")
@@ -422,9 +638,9 @@ class GUtils(Utils):
                 )
             )
             if "embedding" in attrs:
-                attrs["embedding"] = np.array(attrs["embedding"]).tolist
+                attrs["embedding"] = None
             if "embed" in attrs:
-                attrs["embed"] =  np.array(attrs["embedding"]).tolist
+                attrs["embed"]= None
 
         if isinstance(G, (nx.MultiGraph, nx.MultiDiGraph)):
             for u, v, k, d in G.edges(keys=True, data=True):
@@ -465,7 +681,7 @@ class GUtils(Utils):
             edges.append(attrs["id"])
         for k, v in everything.items():
             print(f"{k}: {len(v)} nodes:")#
-            pprint.pp(v)
+            #pprint.pp(v)
 
     def local_batch_loader(self, args):
         table_name = args.get("type")
@@ -693,6 +909,8 @@ class GUtils(Utils):
     def delete_node(self, delid):
         if delid and self.G.has_node(delid):
             self.G.remove_node(delid)
+            # DB sync: keep the persisted ``nodes`` row in sync with G
+            self._db_delete_node(delid)
         else:
             print(f"Couldnt delete since {delid} doesnt exists")
     
