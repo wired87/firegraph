@@ -246,7 +246,8 @@ class GUtils(Utils):
         return None
 
     def cache_walk(self, node_id: str, max_depth: int = 4) -> set:
-        """Hydrate every node reachable from ``node_id`` in the DB store into G.
+        """
+        Hydrate every node reachable from ``node_id`` in the DB store into G.
 
         Uses ``cache_load`` (which already pulls a node + every edge touching
         it in one round-trip) as the per-layer primitive, then expands BFS
