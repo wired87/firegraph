@@ -288,13 +288,18 @@ class GUtils(Utils):
 
     def get_node(self, nid=None, key=None, value=None):
         try:
-            if nid is not None:
+            node_attrs = None
+            if self.G.has_node(nid):
                 return self.G.nodes[nid]
             else:
                 for k, v in self.G.nodes(data=True):
                     if v.get(key) == value:
-                        return v
+                        node_attrs = {"id":k, **{k:v for k,v in v.items() if k not in ["id"]}}
+            if node_attrs is None:
+                raise Exception("NODE NOT FOUND")
+            return node_attrs
         except Exception as e:
+            print("node not found", e)
             return None
 
     def print_edges(self, trgt_l, src_l):
@@ -308,9 +313,10 @@ class GUtils(Utils):
 
     def add_node(self, attrs: dict, flatten=False):
         try:
-            #print("Add node:", attrs)
+            if attrs["id"] == str(7817):
+                print("Add node:", attrs)
             attrs = self.manipulator.clean_attr_keys(
-                attrs,                flatten
+                attrs, flatten
             )
 
             if attrs.get("type") is None:
@@ -411,8 +417,6 @@ class GUtils(Utils):
             src_layer = self.manipulator.replace_special_chars(attrs.get("src_layer")).upper()
             trgt_layer = self.manipulator.replace_special_chars(attrs.get("trgt_layer")).upper()
 
-            # #print("src_layer", src_layer)
-            # #print("trgt_layer", trgt_layer)
             if src is None:
                 src = attrs.get("src")
             if trgt is None:
@@ -464,9 +468,11 @@ class GUtils(Utils):
                 self.G.add_edge(src, trgt, **{k: v for k, v in attrs.items()})
 
                 if not self.G.has_node(src):
+                    print(f"Add missing src node {src} in add_edge", attrs)
                     self.add_node(src_node_attr)
 
                 if not self.G.has_node(trgt):
+                    print(f"Add missing trgt node {trgt} in add_edge", attrs)
                     self.add_node(trgt_node_attr)
 
                 self.edge_store.append(attrs)
@@ -771,11 +777,14 @@ class GUtils(Utils):
             # Get neighbor from type
             nattrs = self.G.nodes[neighbor]
             if target_type is not None:
-                ntype = nattrs.get('type').upper()
-                if ntype in upper_trgt_types:
-                    if neighbor not in neighbors:
-                        neighbors[neighbor] = {}
-                    neighbors[neighbor] = nattrs
+                try:
+                    ntype = nattrs.get('type').upper()
+                    if ntype in upper_trgt_types:
+                        if neighbor not in neighbors:
+                            neighbors[neighbor] = {}
+                        neighbors[neighbor] = nattrs
+                except Exception as e:
+                    print("Err neighbors", e, nattrs, neighbor)
 
         print(f"Neighbors extracted: {neighbors.keys()}")
         return neighbors
