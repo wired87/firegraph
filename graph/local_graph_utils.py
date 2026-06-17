@@ -22,7 +22,6 @@ pipelines that only need the in-memory graph behave exactly as before.
 
 import json
 import os
-import pprint
 import time
 from tempfile import TemporaryDirectory
 
@@ -281,7 +280,12 @@ class GUtils(Utils):
         return visited
 
     def get_edge(self, src, trgt):
-        return self.G.edges[src, trgt]
+        edge_data = self.G.get_edge_data(src, trgt)
+        if not edge_data:
+            return None
+        if isinstance(self.G, (nx.MultiGraph, nx.MultiDiGraph)):
+            return next(iter(edge_data.values()))
+        return edge_data
 
     def get_graph(self):
         return self.G
@@ -289,18 +293,21 @@ class GUtils(Utils):
     def get_node(self, nid=None, key=None, value=None):
         try:
             node_attrs = None
-            if self.G.has_node(nid):
-                return self.G.nodes[nid]
-            else:
+            if nid is not None:
+                if self.G.has_node(nid):
+                    return self.G.nodes[nid]
+
+            elif key is not None and value is not None:
                 for k, v in self.G.nodes(data=True):
-                    if v.get(key) == value:
+                    if v.get(key) == value or k == value:
                         node_attrs = {"id":k, **{k:v for k,v in v.items() if k not in ["id"]}}
+
             if node_attrs is None:
-                raise Exception("NODE NOT FOUND")
+                return None
             return node_attrs
         except Exception as e:
-            print("node not found", e)
-            return None
+            print("Err get_node:", e)
+        return None
 
     def print_edges(self, trgt_l, src_l):
         print("len edges", len([
@@ -313,8 +320,7 @@ class GUtils(Utils):
 
     def add_node(self, attrs: dict, flatten=False):
         try:
-            if attrs["id"] == str(7817):
-                print("Add node:", attrs)
+            #print("Add node:", attrs)
             attrs = self.manipulator.clean_attr_keys(
                 attrs, flatten
             )
@@ -337,11 +343,6 @@ class GUtils(Utils):
             # Extedn keys
             self._extend_key_map(attrs)
             self._extend_id_map(nid)
-            
-            """self.batch_ids.add(nid)
-            if len(self.batch_ids) >= 100:
-                self.db_store.upsert_nid_batch(self.batch_ids)
-                self.batch_ids = set()"""
 
             return True
         except Exception as e:
@@ -683,12 +684,8 @@ class GUtils(Utils):
             if ntype not in everything:
                 everything[ntype] = []
             everything[ntype].append(k)
-        edges = []
-        for src, trgt, attrs in self.G.edges(data=True):
-            edges.append(attrs["id"])
         for k, v in everything.items():
-            print(f"{k}: {len(v)} nodes:")#
-            #pprint.pp(v)
+            print(f"{k}: {len(v)} nodes:", v)
 
     def local_batch_loader(self, args):
         table_name = args.get("type")
@@ -794,7 +791,8 @@ class GUtils(Utils):
             self,
             node:str,
             trgt_rel: str or list or None = None,
-            as_dict=False
+            as_dict=False,
+            just_ids=False,
     ):
         neighbors = {}
         edges = {}
@@ -815,6 +813,7 @@ class GUtils(Utils):
                             if ntype not in neighbors:
                                 neighbors[nnid] = {}
                             edges[nnid] = edge_attrs
+                            neighbors[nnid] = self.G.nodes[nnid]
                 else:
                     # check if rel matches
                     if edge_data.get("rel").lower() in [rel.lower() for rel in trgt_rel]:
@@ -831,6 +830,9 @@ class GUtils(Utils):
 
             except Exception as e:
                 print(f"Err get_neighbor_list_rel for ({edge_data}):", e)
+
+        if just_ids is True:
+            return list(neighbors.keys())
 
         if as_dict is True:
             return neighbors
@@ -917,9 +919,8 @@ class GUtils(Utils):
         return env, env_id
 
     def delete_node(self, delid):
-        if delid and self.G.has_node(delid):
+        if delid and self.get_node(key="id", value=delid):
             self.G.remove_node(delid)
-            # DB sync: keep the persisted ``nodes`` row in sync with G
             self._db_delete_node(delid)
         else:
             print(f"Couldnt delete since {delid} doesnt exists")
